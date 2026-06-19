@@ -254,3 +254,18 @@ lorebound/
 - Reduced motion is respected everywhere: the 3D canvases and heavy motion pause
   when the system or the Settings toggle requests it.
 - No emojis and no em dash anywhere in the source (`npm run no-emoji`).
+
+## Live deployment
+
+Lorebound is deployed and live. The contract runs on the GenLayer Bradbury testnet, and the world of Aster is already seeded on chain (one world, three proposals judged under real AI consensus, one accepted into canon as an artifact).
+
+```ini
+live      = https://lorebound-54f.pages.dev/
+contract  = 0xe99B76bFDc1f79F008CCFda5B321533CBC8f0823
+deploy_tx = 0xc77592fc6982327dbe542e57266c4dae812ea17573aa908b12156a1cf5f25454
+network   = GenLayer Bradbury Testnet (chainId 4221 / 0x107D)
+explorer  = https://explorer-bradbury.genlayer.com/address/0xe99B76bFDc1f79F008CCFda5B321533CBC8f0823
+faucet    = https://testnet-faucet.genlayer.foundation/
+```
+
+The app runs fully offline in Mock mode (the Aster world ships in local data, evaluated by the deep local canon engine). Switch to Live in Settings to read and write the deployed contract directly. Hero and chamber imagery was generated once at build time and ships as static local webp assets, so the live site makes no external API calls.
