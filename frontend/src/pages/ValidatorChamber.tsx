@@ -1,11 +1,25 @@
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
-import { Layers, ArrowUpRight } from 'lucide-react'
-import { ValidatorLayer } from '../components/validators/ValidatorLayer'
+import { Layers, ArrowUpRight, ShieldCheck, ShieldAlert } from 'lucide-react'
 import { AssetImage } from '../components/shared/AssetImage'
-import { VALIDATOR_CASES } from '../data/validatorCases'
+import { EvidencePanel } from '../components/trial/EvidencePanel'
+import { LoadingCard, ErrorCard } from '../components/shared/ChainState'
+import { useStore } from '../state/store'
+import type { ChainProposal, ValidatorResult } from '../types'
+import { verdictLabel, verdictColor } from '../utils/formatters'
+
+// The Validator Chamber renders the real validatorResults recorded on chain for
+// each evaluated proposal. If a proposal carries no validator records, its real
+// evidence and reason are shown as the layers instead. Nothing is fabricated.
 
 export function ValidatorChamber() {
+  const { world, proposals, loading, error, refresh } = useStore()
+
+  if (loading && !world) return <LoadingCard label="Convening the Validator Chamber" />
+  if (!world) return <ErrorCard message={error || 'No world is published on chain yet.'} onRetry={refresh} />
+
+  const evaluated = proposals.filter((p) => p.verdict)
+
   return (
     <div className="space-y-10">
       <header className="relative">
@@ -17,9 +31,8 @@ export function ValidatorChamber() {
               <span className="eyebrow">Depth, not field checks</span>
               <h1 className="myth-title mt-3 text-4xl text-bone sm:text-5xl">Validator Chamber</h1>
               <p className="mt-3 text-[15px] text-bone/65">
-                The validators do not confirm that a JSON object is well formed. They review the result in
-                layers. Each layer checks something real, uses real evidence, and can correct or overrule
-                the leader. Below is a worked example for each layer.
+                Each evaluated proposal carries the validator results recorded on chain. These are the real
+                rulings the network reached, layer by layer, for every proposal in {world.name}.
               </p>
             </div>
           </div>
@@ -33,15 +46,14 @@ export function ValidatorChamber() {
               <Layers size={20} color="var(--myth-gold)" />
             </span>
             <div>
-              <h2 className="myth-title text-lg text-bone">Six layers, one consensus</h2>
+              <h2 className="myth-title text-lg text-bone">Consensus, recorded on chain</h2>
               <p className="text-[12px] text-bone/55">
-                Consensus anchors on the categorical verdict plus the Canon Fit value within tolerance. The
-                deterministic backstops below run in the contract, not the prompt.
+                Every ruling below is read from the contract, not generated in the browser.
               </p>
             </div>
           </div>
           <Link to="/trial" className="cta cta-ghost shrink-0">
-            Watch them rule live
+            Watch a live trial
             <span className="cta-icon">
               <ArrowUpRight size={15} />
             </span>
@@ -49,31 +61,83 @@ export function ValidatorChamber() {
         </div>
       </section>
 
-      <div className="grid gap-5 lg:grid-cols-2">
-        {VALIDATOR_CASES.map((c, i) => (
-          <ValidatorLayer key={c.id} data={c} index={i} />
-        ))}
-      </div>
-
-      <section className="bezel">
-        <div className="bezel-core p-6 sm:p-8">
-          <motion.h2
-            initial={{ opacity: 0, y: 16 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="myth-title text-2xl text-bone"
-          >
-            The worked example, end to end
-          </motion.h2>
-          <p className="mt-2 max-w-3xl text-[14px] text-bone/65">
-            When the leader accepted the Bridgewrights and cited a slightly imprecise rule, the Evidence
-            Validator did not simply agree. It resolved the citation to the real canon text, corrected the
-            wording, and only then let the seal form. A validator that merely checked the JSON shape would
-            have rubber-stamped an inaccurate citation. That difference is the whole point of consensus
-            here: the canon is only as trustworthy as the evidence behind each decision.
-          </p>
+      {evaluated.length === 0 ? (
+        <ErrorCard message={error || 'No evaluated proposals are recorded on chain yet.'} onRetry={refresh} />
+      ) : (
+        <div className="space-y-8">
+          {evaluated.map((p) => (
+            <ProposalValidators key={p.proposalId} proposal={p} />
+          ))}
         </div>
-      </section>
+      )}
     </div>
+  )
+}
+
+function ProposalValidators({ proposal }: { proposal: ChainProposal }) {
+  const color = verdictColor(proposal.verdict)
+  return (
+    <section className="bezel">
+      <div className="bezel-core p-6 sm:p-8">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="myth-title text-2xl text-bone">{proposal.title}</h2>
+            <p className="mt-1 text-[12px] text-bone/55">{proposal.type} {'\u00b7'} {proposal.proposalId}</p>
+          </div>
+          <span className="rune-chip shrink-0" style={{ color, borderColor: color }}>
+            {verdictLabel(proposal.verdict)}
+          </span>
+        </div>
+
+        {proposal.reason ? <p className="mt-3 max-w-3xl text-[14px] text-bone/70">{proposal.reason}</p> : null}
+
+        {proposal.validatorResults.length > 0 ? (
+          <div className="mt-5 grid gap-4 lg:grid-cols-2">
+            {proposal.validatorResults.map((v, i) => (
+              <ValidatorRecord key={`${v.validator}-${i}`} result={v} index={i} />
+            ))}
+          </div>
+        ) : (
+          <div className="mt-5 space-y-4">
+            <p className="text-[12px] text-bone/55">
+              This proposal carries no separate validator records on chain. Its recorded evidence and reason
+              are shown as the basis for the verdict.
+            </p>
+            <EvidencePanel evidence={proposal.evidence} />
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function ValidatorRecord({ result, index }: { result: ValidatorResult; index: number }) {
+  const ok = /accept|pass|seal|ok/i.test(result.status)
+  const color = ok ? 'var(--success-mint)' : 'var(--danger-ruby)'
+  const Icon = ok ? ShieldCheck : ShieldAlert
+  return (
+    <motion.article
+      initial={{ opacity: 0, y: 20, filter: 'blur(6px)' }}
+      whileInView={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+      viewport={{ once: true, margin: '-60px' }}
+      transition={{ delay: (index % 2) * 0.08, duration: 0.55, ease: [0.32, 0.72, 0, 1] }}
+      className="glass-panel p-5"
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <span
+            className="flex h-10 w-10 items-center justify-center rounded-xl"
+            style={{ background: 'rgba(116,235,213,0.1)', border: '1px solid var(--line-2)' }}
+          >
+            <Icon size={18} color={color} />
+          </span>
+          <h3 className="myth-title text-lg text-bone">{result.validator}</h3>
+        </div>
+        <span className="rune-chip shrink-0" style={{ color, borderColor: color }}>
+          {result.status}
+        </span>
+      </div>
+      <p className="mt-3 text-sm text-bone/80">{result.reason}</p>
+    </motion.article>
   )
 }

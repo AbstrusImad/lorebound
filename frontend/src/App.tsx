@@ -11,7 +11,6 @@ import { CanonConstellation } from './pages/CanonConstellation'
 import { ArtifactHall } from './pages/ArtifactHall'
 import { WorldMemory } from './pages/WorldMemory'
 import { ValidatorChamber } from './pages/ValidatorChamber'
-import { Settings } from './pages/Settings'
 
 export default function App() {
   const location = useLocation()
@@ -33,7 +32,6 @@ export default function App() {
             <Route path="/hall" element={<ArtifactHall />} />
             <Route path="/memory" element={<WorldMemory />} />
             <Route path="/validators" element={<ValidatorChamber />} />
-            <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<WorldGate />} />
           </Routes>
         </PageTransition>

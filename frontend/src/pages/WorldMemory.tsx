@@ -1,30 +1,43 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { Sparkles } from 'lucide-react'
-import { WorldMemoryTimeline, trialToEntry, type TimelineEntry } from '../components/artifacts/WorldMemoryTimeline'
+import { WorldMemoryTimeline, type TimelineEntry } from '../components/artifacts/WorldMemoryTimeline'
 import { AssetImage } from '../components/shared/AssetImage'
 import { EmptyState } from '../components/shared/EmptyState'
+import { LoadingCard, ErrorCard } from '../components/shared/ChainState'
 import { useStore } from '../state/store'
+import type { Verdict } from '../types'
 
 export function WorldMemory() {
-  const { world, trials } = useStore()
+  const { world, proposals, loading, error, refresh } = useStore()
 
   const entries = useMemo<TimelineEntry[]>(() => {
-    const seeds: TimelineEntry[] = world.artifacts
-      .filter((a) => a.sourceProposal === 'seed')
-      .map((a) => ({
-        id: a.artifactId,
-        title: a.title,
-        verdict: 'SEED',
-        date: a.acceptedDate,
-        detail: a.summary,
-        type: a.type
-      }))
-    const trialEntries = trials.map(trialToEntry)
-    const all = [...trialEntries, ...seeds]
-    all.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-    return all
-  }, [world.artifacts, trials])
+    if (!world) return []
+    // Accepted artifacts as canon events.
+    const artifactEntries: TimelineEntry[] = world.artifacts.map((a) => ({
+      id: `artifact-${a.artifactId}`,
+      title: a.title,
+      verdict: 'ACCEPTED' as Verdict,
+      date: a.acceptedDate,
+      detail: a.summary,
+      type: a.type
+    }))
+    // Proposal verdicts (accepted / rejected / revision) as ruling events.
+    const proposalEntries: TimelineEntry[] = proposals.map((p, i) => ({
+      id: `proposal-${p.proposalId}`,
+      title: p.title,
+      verdict: p.verdict || ('' as Verdict),
+      // Chain order: earlier proposalIds are older events.
+      date: String(proposals.length - i),
+      detail: p.reason || p.contribution || p.text.slice(0, 160),
+      type: p.type
+    }))
+    // Keep chain order: proposals first (newest ruling at top), then artifacts.
+    return [...proposalEntries, ...artifactEntries]
+  }, [world, proposals])
+
+  if (loading && !world) return <LoadingCard label="Recalling the World Memory" />
+  if (!world) return <ErrorCard message={error || 'No world is published on chain yet.'} onRetry={refresh} />
 
   return (
     <div className="space-y-8">
@@ -37,8 +50,8 @@ export function WorldMemory() {
               <span className="eyebrow">The river of time</span>
               <h1 className="myth-title mt-3 text-4xl text-bone sm:text-5xl">World Memory</h1>
               <p className="mt-3 max-w-2xl text-[15px] text-bone/65">
-                The history of {world.name} as a flowing ribbon. Founding canon, accepted pieces, rejected
-                fragments and revisions, in the order the world remembers them.
+                The history of {world.name} as a flowing ribbon. Accepted canon, accepted proposals and
+                rejected fragments, in the order the chain remembers them.
               </p>
             </div>
           </div>
@@ -48,7 +61,7 @@ export function WorldMemory() {
       {entries.length === 0 ? (
         <EmptyState
           title="The world has no memory yet"
-          body="Run a Continuity Trial and the verdict will be written into the timeline."
+          body="When a proposal is judged on chain, its verdict joins the timeline."
           action={
             <Link to="/forge" className="cta cta-ghost mt-2">
               Forge a proposal

@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Hammer, Wand2, ArrowUpRight, BookOpen } from 'lucide-react'
+import { Hammer, Wand2, ArrowUpRight, BookOpen, Wallet, AlertTriangle } from 'lucide-react'
 import { AssetImage } from '../components/shared/AssetImage'
+import { LoadingCard, ErrorCard } from '../components/shared/ChainState'
 import { useStore } from '../state/store'
 import { useToast } from '../components/shared/Toast'
-import { DEMO_PROPOSALS } from '../data/demoProposals'
+import { hasInjectedWallet, FAUCET } from '../genlayer/genlayerClient'
 import type { LoreType, Proposal, Tone } from '../types'
 
 const LORE_TYPES: LoreType[] = [
@@ -25,7 +26,7 @@ const TONES: Tone[] = ['Mythic', 'Dark', 'Hopeful', 'Political', 'Mysterious', '
 const DRAFT_KEY = 'lorebound.forge.draft.v1'
 
 export function LoreForge() {
-  const { world } = useStore()
+  const { world, loading, error, refresh, wallet, connect } = useStore()
   const navigate = useNavigate()
   const toast = useToast()
 
@@ -38,25 +39,32 @@ export function LoreForge() {
 
   const canSubmit = title.trim().length > 0 && text.trim().length > 12
 
-  const nearbyRules = useMemo(() => world.rules.slice(0, 5), [world.rules])
+  const nearbyRules = useMemo(() => (world ? world.rules.slice(0, 5) : []), [world])
 
-  const loadDemo = (id: string) => {
-    const demo = DEMO_PROPOSALS.find((d) => d.proposalId === id)
-    if (!demo) return
-    setTitle(demo.title)
-    setType(demo.type)
-    setText(demo.text)
-    setContribution(demo.contribution)
-    setTone(demo.tone)
-    setTags(demo.tags.join(', '))
-    toast.push('info', `Loaded demo: ${demo.label}`)
+  if (loading && !world) return <LoadingCard label="Heating the Lore Forge" />
+  if (!world) return <ErrorCard message={error || 'No world is published on chain yet.'} onRetry={refresh} />
+
+  const ensureWallet = async (): Promise<boolean> => {
+    if (wallet) return true
+    if (!hasInjectedWallet()) {
+      toast.push('error', 'No wallet detected. Install a wallet or open the faucet to fund one.')
+      return false
+    }
+    const res = await connect()
+    if (!res.ok) {
+      toast.push('error', res.error || 'Could not connect a wallet.')
+      return false
+    }
+    return true
   }
 
-  const submit = () => {
+  const submit = async () => {
     if (!canSubmit) {
       toast.push('error', 'Give the proposal a title and a fuller description.')
       return
     }
+    const ok = await ensureWallet()
+    if (!ok) return
     const proposal: Proposal = {
       proposalId: `prop-${Date.now().toString(36)}`,
       worldId: world.worldId,
@@ -85,24 +93,35 @@ export function LoreForge() {
         <h1 className="myth-title text-4xl text-bone sm:text-5xl">Lore Forge</h1>
         <p className="max-w-2xl text-[15px] text-bone/60">
           Shape a new piece of lore for {world.name}. Forge it with intent, then submit it to the
-          Continuity Trial where the canon decides its fate.
+          Continuity Trial where GenLayer consensus decides its fate on chain.
         </p>
       </header>
 
-      {/* demo seeds */}
-      <div className="flex flex-wrap gap-2">
-        {DEMO_PROPOSALS.map((d) => (
-          <button
-            key={d.proposalId}
-            type="button"
-            onClick={() => loadDemo(d.proposalId)}
-            className="rune-chip hover:border-rune"
-            title={d.blurb}
-          >
-            {d.label}
-          </button>
-        ))}
-      </div>
+      {!wallet ? (
+        <div
+          className="glass-panel flex flex-wrap items-center gap-3 p-4 text-[13px] text-bone/70"
+          style={{ borderColor: 'rgba(244,201,93,0.3)' }}
+        >
+          <AlertTriangle size={16} color="var(--myth-gold)" />
+          <span>A wallet is required to submit and evaluate a proposal on Bradbury.</span>
+          {hasInjectedWallet() ? (
+            <button
+              type="button"
+              onClick={async () => {
+                const res = await connect()
+                if (!res.ok) toast.push('error', res.error || 'Could not connect a wallet.')
+              }}
+              className="cta cta-ghost !px-4 !py-2 text-sm"
+            >
+              <Wallet size={14} /> Connect wallet
+            </button>
+          ) : (
+            <a href={FAUCET} target="_blank" rel="noreferrer" className="ink-link underline">
+              No wallet detected. Open the testnet faucet.
+            </a>
+          )}
+        </div>
+      ) : null}
 
       <div className="grid gap-6 lg:grid-cols-5">
         {/* forge form */}
@@ -243,7 +262,10 @@ export function LoreForge() {
                 <BookOpen size={15} color="var(--myth-gold)" />
                 <h3 className="myth-title text-lg text-bone">Nearby canon</h3>
               </div>
-              <p className="mt-1 text-[12px] text-bone/50">Write with these rules in mind. Break them and the trial will catch it.</p>
+              <p className="mt-1 text-[12px] text-bone/50">
+                These are the live canon rules of {world.name}, read from chain. Break them and the trial
+                will catch it.
+              </p>
               <ul className="mt-3 space-y-2">
                 {nearbyRules.map((r, i) => (
                   <li key={r.id} className="flex gap-2.5 text-[13px] text-bone/70">
@@ -257,7 +279,7 @@ export function LoreForge() {
 
           <div className="glass-panel flex items-center gap-3 p-4 text-[12px] text-bone/55">
             <Hammer size={15} color="var(--rune-cyan)" />
-            <span>Try the demo seeds above to see every verdict path: accepted, rejected, revision, tone, duplicate and adversarial.</span>
+            <span>Your proposal is submitted and evaluated under GenLayer consensus on Bradbury. The verdict and scores are read straight back from chain.</span>
           </div>
         </div>
       </div>

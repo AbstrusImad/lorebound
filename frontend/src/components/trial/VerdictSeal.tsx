@@ -10,13 +10,14 @@ const ICON: Record<Verdict, typeof CheckCircle2> = {
   ACCEPTED: CheckCircle2,
   REJECTED: XCircle,
   NEEDS_REVISION: RefreshCcw,
-  NEEDS_HUMAN_VOTE: Scale
+  NEEDS_HUMAN_VOTE: Scale,
+  '': Scale
 }
 
 export function VerdictSeal({ verdict, size = 132 }: { verdict: Verdict; size?: number }) {
   const reduced = useReducedMotion()
   const color = verdictColor(verdict)
-  const Icon = ICON[verdict]
+  const Icon = ICON[verdict] || Scale
   return (
     <div className="relative flex flex-col items-center gap-3">
       <div className="relative flex items-center justify-center" style={{ width: size, height: size }}>

@@ -6,7 +6,7 @@ import type { ValidatorResult } from '../../types'
 // independent ruling.
 
 export function ValidatorPassCard({ result, index }: { result: ValidatorResult; index: number }) {
-  const ok = result.status === 'accepted'
+  const ok = /accept|pass|seal|ok/i.test(result.status)
   const color = ok ? 'var(--success-mint)' : 'var(--danger-ruby)'
   return (
     <motion.div
@@ -20,11 +20,10 @@ export function ValidatorPassCard({ result, index }: { result: ValidatorResult; 
         <div className="flex items-center gap-2">
           <p className="text-sm font-semibold text-bone">{result.validator}</p>
           <span className="font-mono text-[10px] uppercase tracking-wider" style={{ color }}>
-            {ok ? 'pass' : 'flag'}
+            {result.status || (ok ? 'pass' : 'flag')}
           </span>
         </div>
         <p className="mt-0.5 text-[12px] text-bone/55">{result.reason}</p>
-        {result.fault ? <p className="mt-1 text-[11px] text-ruby/90">{result.fault}</p> : null}
       </div>
     </motion.div>
   )

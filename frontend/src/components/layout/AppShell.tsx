@@ -2,9 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Menu, X, Sparkles } from 'lucide-react'
-import { MockWalletButton } from './MockWalletButton'
-import { ReducedMotionToggle } from './ReducedMotionToggle'
-import { useStore } from '../../state/store'
+import { WalletButton } from './WalletButton'
 
 const NAV = [
   { to: '/', label: 'World Gate', end: true },
@@ -14,13 +12,11 @@ const NAV = [
   { to: '/constellation', label: 'Constellation' },
   { to: '/hall', label: 'Artifact Hall' },
   { to: '/memory', label: 'World Memory' },
-  { to: '/validators', label: 'Validators' },
-  { to: '/settings', label: 'Settings' }
+  { to: '/validators', label: 'Validators' }
 ]
 
 export function AppShell({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false)
-  const { settings } = useStore()
   const location = useLocation()
 
   return (
@@ -67,17 +63,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="hidden sm:block">
-              <ReducedMotionToggle />
-            </span>
-            <span className="rune-chip hidden items-center gap-1.5 md:inline-flex">
-              <span
-                className="h-1.5 w-1.5 rounded-full"
-                style={{ background: settings.genlayerMode === 'mock' ? 'var(--rune-cyan)' : 'var(--myth-gold)' }}
-              />
-              {settings.genlayerMode === 'mock' ? 'Mock' : 'Live'}
-            </span>
-            <MockWalletButton />
+            <WalletButton />
             <button
               type="button"
               onClick={() => setOpen((o) => !o)}
@@ -136,7 +122,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <p className="text-xs text-bone/45">Build worlds the canon can remember.</p>
           </div>
           <p className="font-mono text-[11px] text-bone/40">
-            Canon verified by GenLayer consensus. Demo runs on local world state.
+            Canon verified by GenLayer consensus. Live on Bradbury testnet.
           </p>
         </div>
       </footer>

@@ -5,6 +5,7 @@ import { Link2, ArrowUpRight, X } from 'lucide-react'
 import { LivingAtlas } from '../components/atlas/LivingAtlas'
 import { AssetImage } from '../components/shared/AssetImage'
 import { ProofHashBadge } from '../components/shared/ProofHashBadge'
+import { LoadingCard, ErrorCard } from '../components/shared/ChainState'
 import { useStore } from '../state/store'
 import type { CanonArtifact } from '../types'
 import { formatDate } from '../utils/formatters'
@@ -22,8 +23,11 @@ const TYPE_COLOR: Record<string, string> = {
 }
 
 export function CanonAtlas() {
-  const { world } = useStore()
+  const { world, loading, error, refresh } = useStore()
   const [selected, setSelected] = useState<CanonArtifact | null>(null)
+
+  if (loading && !world) return <LoadingCard label="Charting the Canon Atlas" />
+  if (!world) return <ErrorCard message={error || 'No world is published on chain yet.'} onRetry={refresh} />
 
   return (
     <div className="space-y-8">

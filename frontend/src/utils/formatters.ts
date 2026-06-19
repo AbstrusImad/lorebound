@@ -10,6 +10,8 @@ export function verdictLabel(v: Verdict): string {
       return 'Needs Revision'
     case 'NEEDS_HUMAN_VOTE':
       return 'Needs Human Canon Vote'
+    case '':
+      return 'Pending evaluation'
     default:
       return v
   }

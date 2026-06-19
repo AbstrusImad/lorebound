@@ -119,9 +119,8 @@ rather than rubber-stamping it.
 5. Canon Constellation (`/constellation`): how a piece would change the world.
 6. Artifact Hall (`/hall`): a reliquary of floating accepted artifacts.
 7. World Memory (`/memory`): a cinematic timeline of the world's evolution.
-8. Validator Chamber (`/validators`): the depth of the validator layers.
-9. Settings (`/settings`): reduced motion, GenLayer mode, world export/import,
-   clear local data, mock wallet.
+8. Validator Chamber (`/validators`): the validator results recorded on chain
+   for each evaluated proposal.
 
 ## Running the frontend
 
@@ -140,52 +139,27 @@ site works from the Cloudflare Pages root. Routing uses a hash router plus a
 
 ## Using the Aster demo
 
-Open the Lore Forge or the Continuity Trial. Both offer one-tap demo seeds that
-exercise every verdict path:
+The world of Aster is live on chain. Open the Canon Atlas, Artifact Hall or the
+Continuity Trial to read its real canon rules, its accepted artifact and its
+three judged proposals straight from the contract.
 
-- Clear fit (Accepted): a guild that repairs floating bridges with silent glass
-  threads.
-- Rule breaker (Rejected): an underground steel-tower kingdom.
-- Needs revision: a warrior faction that uses metal armor to hunt sky-beasts.
-- Tone mismatch: a comedic robot salesman selling cloud insurance.
-- Conceptual duplicate: another silent glass guild with almost the same role.
-- Adversarial override (Rejected): a proposal that says the canon rules should
-  be ignored.
+### Submitting a new proposal
 
-### Testing accepted vs rejected proposals
+Open the Lore Forge, write a proposal and connect a wallet. Submitting signs
+`submit_lore_proposal` then `evaluate_lore_proposal` on Bradbury, and the trial
+polls the transaction through consensus before reading the real verdict, scores,
+evidence and validator results back from chain.
 
-Load a demo seed (or write your own) in the Forge and submit it to the trial.
-Watch the staged consensus run, then read the verdict seal, the four gauges, the
-evidence and the validator layers. For an accepted verdict, use "Add to the
-canon" to place a new star in the constellation and a new relic in the hall.
+## How the data layer works
 
-## How the mock GenLayer works
-
-By default the app runs in mock mode and is fully offline. The deep local engine
-(`src/utils/localCanonEngine.ts`) genuinely reasons about a proposal: it cites
-real canon rules, detects contradictions against specific rules, detects
-conceptual duplication against existing artifacts via token overlap, checks tone
-against the world tone, and produces a suggested revision that fixes the
-offending element. It also hard-stops canon-override attempts. The mock
-GenLayer layer (`src/genlayer/mockGenLayer.ts`) stages this like an on-chain
-consensus run (wallet, submitted, consensus, confirmed) so the trial feels real
-without a network.
-
-## Wiring the real integration later
-
-The real path lives in `src/genlayer/genlayerClient.ts`. It uses genlayer-js
-(`createClient` on `testnetBradbury`, `readContract` / `writeContract`, and a
-poller that treats `LEADER_TIMEOUT` and `VALIDATORS_TIMEOUT` as non-terminal).
-The contract address is exported as:
-
-```ts
-export const CONTRACT_ADDRESS = '0x0000000000000000000000000000000000000000'
-```
-
-After the contract is deployed to Bradbury, replace that placeholder with the
-real address and rebuild. Switch the app to Live in Settings. In Live mode the
-trial submits the proposal, runs `evaluate_lore_proposal` under consensus, and
-reads back the evaluated proposal from the contract.
+The frontend reads everything from the deployed Bradbury contract. On mount and
+on a slow background poll, the store loads the world via `get_worlds` /
+`get_world_state`, its proposals via `get_proposals`, and the stats via
+`get_stats`, then normalizes the JSON each view returns. The read helpers live
+in `src/genlayer/genlayerClient.ts` (`fetchStats`, `fetchWorlds`,
+`fetchWorldState`, `fetchProposals`, `fetchProposal`, `fetchArtifact`). There is
+no local engine and no offline data: a failed read shows an error card with a
+retry and an explorer link, never fabricated content.
 
 ## The contract
 
@@ -238,21 +212,20 @@ lorebound/
     public/assets/            # curated webp art (referenced, never generated at runtime)
     src/
       components/             # layout, atlas, forge, trial, constellation, artifacts, validators, animation, shared
-      data/                   # asterWorld, demoProposals, validatorCases
-      genlayer/               # genlayerClient (real path + mode), mockGenLayer
-      pages/                  # the 9 chambers
-      state/                  # the world / settings / wallet store
-      utils/                  # localCanonEngine, continuityScoring, toneMatcher, originalityCheck, exportImport, formatters
+      genlayer/               # genlayerClient (on-chain reads + live proposal flow)
+      pages/                  # the chambers
+      state/                  # the live on-chain world / wallet store
+      utils/                  # formatters
       types.ts
     scripts/no-emoji.cjs
 ```
 
 ## Notes
 
-- No external APIs, no backend, no remote data at runtime. Everything runs on
-  local demo data plus manual user input.
+- The frontend reads only from the deployed contract at runtime. No offline
+  demo data and no fabricated content: a failed read shows an error state.
 - Reduced motion is respected everywhere: the 3D canvases and heavy motion pause
-  when the system or the Settings toggle requests it.
+  when the system `prefers-reduced-motion` setting requests it.
 - No emojis and no em dash anywhere in the source (`npm run no-emoji`).
 
 ## Live deployment
@@ -268,4 +241,4 @@ explorer  = https://explorer-bradbury.genlayer.com/address/0xe99B76bFDc1f79F008C
 faucet    = https://testnet-faucet.genlayer.foundation/
 ```
 
-The app runs fully offline in Mock mode (the Aster world ships in local data, evaluated by the deep local canon engine). Switch to Live in Settings to read and write the deployed contract directly. Hero and chamber imagery was generated once at build time and ships as static local webp assets, so the live site makes no external API calls.
+The app reads live from the deployed contract on the GenLayer Bradbury testnet: the world of Aster, its canon rules, its artifact and its judged proposals all come from on-chain reads. Hero and chamber imagery was generated once at build time and ships as static local webp assets, so the site makes no third-party API calls beyond the GenLayer RPC.

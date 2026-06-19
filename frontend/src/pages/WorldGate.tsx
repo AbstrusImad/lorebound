@@ -14,6 +14,7 @@ import { MotionPortal } from '../components/animation/MotionPortal'
 import { AssetImage } from '../components/shared/AssetImage'
 import { VerdictSeal } from '../components/trial/VerdictSeal'
 import { FloatingRune } from '../components/animation/FloatingRune'
+import { LoadingCard, ErrorCard } from '../components/shared/ChainState'
 import { useStore } from '../state/store'
 
 const fadeUp = {
@@ -47,7 +48,32 @@ const WHY = [
 ]
 
 export function WorldGate() {
-  const { world } = useStore()
+  const { world, proposals, loading, error, refresh } = useStore()
+
+  if (loading && !world) {
+    return (
+      <div className="space-y-8">
+        <LoadingCard label="Opening the World Gate" />
+      </div>
+    )
+  }
+  if (error && !world) {
+    return (
+      <div className="space-y-8">
+        <ErrorCard message={error} onRetry={refresh} />
+      </div>
+    )
+  }
+  if (!world) {
+    return (
+      <div className="space-y-8">
+        <ErrorCard message="No world is published on chain yet." onRetry={refresh} />
+      </div>
+    )
+  }
+
+  // The real accepted proposal from chain drives the worked preview seal.
+  const accepted = proposals.find((p) => p.verdict === 'ACCEPTED') || null
 
   return (
     <div className="space-y-28">
@@ -171,26 +197,35 @@ export function WorldGate() {
 
         <motion.div {...fadeUp} className="bezel">
           <div className="bezel-core flex flex-col items-center gap-6 p-10">
-            <VerdictSeal verdict="ACCEPTED" />
-            <p className="text-center text-sm text-bone/60">
-              A guild that repairs floating bridges with silent glass threads fits Aster cleanly. It enters
-              the canon as a new star.
-            </p>
-            <div className="grid w-full grid-cols-2 gap-3 text-center">
-              {[
-                ['Canon Fit', 88, 'var(--success-mint)'],
-                ['Continuity Risk', 12, 'var(--rune-cyan)'],
-                ['Originality', 81, 'var(--myth-gold)'],
-                ['Tone Match', 92, 'var(--spirit-blue)']
-              ].map(([k, v, c]) => (
-                <div key={k as string} className="glass-panel p-3">
-                  <p className="font-mono text-xl" style={{ color: c as string }}>
-                    {v as number}
-                  </p>
-                  <p className="text-[10px] uppercase tracking-[0.16em] text-bone/45">{k as string}</p>
+            {accepted ? (
+              <>
+                <VerdictSeal verdict="ACCEPTED" />
+                <p className="text-center text-sm text-bone/60">{accepted.reason}</p>
+                <div className="grid w-full grid-cols-2 gap-3 text-center">
+                  {[
+                    ['Canon Fit', accepted.canonFitScore, 'var(--success-mint)'],
+                    ['Continuity Risk', accepted.continuityRisk, 'var(--rune-cyan)'],
+                    ['Originality', accepted.originalityScore, 'var(--myth-gold)'],
+                    ['Tone Match', accepted.toneMatch, 'var(--spirit-blue)']
+                  ].map(([k, v, c]) => (
+                    <div key={k as string} className="glass-panel p-3">
+                      <p className="font-mono text-xl" style={{ color: c as string }}>
+                        {v as number}
+                      </p>
+                      <p className="text-[10px] uppercase tracking-[0.16em] text-bone/45">{k as string}</p>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </>
+            ) : (
+              <>
+                <VerdictSeal verdict="" />
+                <p className="text-center text-sm text-bone/60">
+                  When a proposal is judged on chain, its verdict forms here as a living seal with its four
+                  real scores. Open the Continuity Trial to read the canon's rulings.
+                </p>
+              </>
+            )}
           </div>
         </motion.div>
       </section>

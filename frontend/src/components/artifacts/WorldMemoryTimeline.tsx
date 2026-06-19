@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { CheckCircle2, XCircle, RefreshCcw, Scale, Sparkles } from 'lucide-react'
-import type { EvaluationResult, Verdict } from '../../types'
+import type { Verdict } from '../../types'
 import { verdictColor, verdictLabel, formatDate } from '../../utils/formatters'
 
 export interface TimelineEntry {
@@ -17,7 +17,14 @@ const ICON: Record<string, typeof CheckCircle2> = {
   REJECTED: XCircle,
   NEEDS_REVISION: RefreshCcw,
   NEEDS_HUMAN_VOTE: Scale,
-  SEED: Sparkles
+  SEED: Sparkles,
+  '': Scale
+}
+
+function isRealDate(d: string): boolean {
+  if (!d) return false
+  const t = new Date(d).getTime()
+  return !Number.isNaN(t) && /\d{4}/.test(d)
 }
 
 export function WorldMemoryTimeline({ entries }: { entries: TimelineEntry[] }) {
@@ -51,7 +58,7 @@ export function WorldMemoryTimeline({ entries }: { entries: TimelineEntry[] }) {
                     <div className="mt-2 flex items-center gap-2 text-[11px]">
                       <span className="rune-chip">{e.type}</span>
                       <span style={{ color }}>{e.verdict === 'SEED' ? 'Founding canon' : verdictLabel(e.verdict as Verdict)}</span>
-                      <span className="text-bone/40">{formatDate(e.date)}</span>
+                      {isRealDate(e.date) ? <span className="text-bone/40">{formatDate(e.date)}</span> : null}
                     </div>
                   </div>
                 </motion.div>
@@ -69,15 +76,4 @@ export function WorldMemoryTimeline({ entries }: { entries: TimelineEntry[] }) {
       </ul>
     </div>
   )
-}
-
-export function trialToEntry(t: EvaluationResult): TimelineEntry {
-  return {
-    id: t.proposalId,
-    title: t.title,
-    verdict: t.verdict,
-    date: t.evaluatedAt || new Date().toISOString(),
-    detail: t.reason,
-    type: t.type
-  }
 }

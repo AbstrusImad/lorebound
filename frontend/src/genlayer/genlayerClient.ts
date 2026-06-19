@@ -1,42 +1,47 @@
 /*
   genlayerClient.ts
-  The public client surface for Lorebound. It routes each canon action between
-  the LOCAL mock engine (default, fully offline) and the REAL GenLayer Bradbury
-  contract, based on the selected mode ('mock' | 'real').
-
-  CONTRACT_ADDRESS is the single placeholder the PARENT overwrites after
-  deploying to Bradbury, then rebuilds. Until then it is the zero address and
-  the real path reports "not deployed", so the app always works in mock mode.
+  The single client surface for Lorebound. Everything it returns comes from the
+  deployed GenLayer Bradbury contract: reads go through readContract + JSON.parse
+  + normalize, and the live proposal flow signs submit_lore_proposal then
+  evaluate_lore_proposal with the injected wallet, polling the transaction until
+  consensus is reached. There is one real on-chain path and no mode switch.
 */
 import { createClient } from 'genlayer-js'
 import { testnetBradbury } from 'genlayer-js/chains'
-import type { EvaluationResult, GenLayerStatus, Proposal, World } from '../types'
-import * as mock from './mockGenLayer'
-import type { StageCallback } from './mockGenLayer'
+import type {
+  CanonArtifact,
+  CanonRule,
+  ChainProposal,
+  ContractStats,
+  EvidenceItem,
+  LoreType,
+  Proposal,
+  ValidatorResult,
+  World
+} from '../types'
 
 // ---- live contract coordinates ------------------------------------------
-// PLACEHOLDER. The parent deploy step replaces this address (and rebuilds).
 export const CONTRACT_ADDRESS = '0xe99B76bFDc1f79F008CCFda5B321533CBC8f0823'
 export const DEPLOY_TX = '0xc77592fc6982327dbe542e57266c4dae812ea17573aa908b12156a1cf5f25454'
 export const EXPLORER = 'https://explorer-bradbury.genlayer.com'
 export const FAUCET = 'https://testnet-faucet.genlayer.foundation/'
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
+// The contract is deployed, so this is always true. The guard never triggers.
 export const IS_DEPLOYED = String(CONTRACT_ADDRESS).toLowerCase() !== ZERO_ADDRESS.toLowerCase()
 
-// ---- mode ----------------------------------------------------------------
+// ---- trial staging -------------------------------------------------------
 
-let mode: 'mock' | 'real' = 'mock'
+export type TrialStage =
+  | { phase: 'wallet' }
+  | { phase: 'submitted'; txHash: string }
+  | { phase: 'consensus'; status: string; draft?: Partial<ChainProposal> }
+  | { phase: 'confirmed'; result: ChainProposal; txHash: string }
+  | { phase: 'error'; message: string }
 
-export function setGenLayerMode(next: 'mock' | 'real'): void {
-  mode = next === 'real' ? 'real' : 'mock'
-}
+export type StageCallback = (stage: TrialStage) => void
 
-export function getGenLayerMode(): 'mock' | 'real' {
-  return mode
-}
-
-// ---- read client (real) --------------------------------------------------
+// ---- read client ---------------------------------------------------------
 
 let _readClient: ReturnType<typeof createClient> | null = null
 function readClient() {
@@ -49,7 +54,16 @@ function makeWalletClient(account: string) {
   return createClient({ chain: testnetBradbury, account: account as `0x${string}`, provider })
 }
 
-// ---- transaction status naming (real) ------------------------------------
+async function readRaw(functionName: string, args: unknown[]): Promise<string> {
+  const raw = (await readClient().readContract({
+    address: CONTRACT_ADDRESS as `0x${string}`,
+    functionName,
+    args: args as never
+  })) as unknown
+  return typeof raw === 'string' ? raw : JSON.stringify(raw)
+}
+
+// ---- transaction status naming -------------------------------------------
 
 const STATUS_NAME: Record<string, string> = {
   '1': 'PENDING',
@@ -68,8 +82,8 @@ function statusName(s: unknown): string {
   return STATUS_NAME[String(s)] || String(s == null ? 'PENDING' : s).toUpperCase()
 }
 
-// LEADER_TIMEOUT / VALIDATORS_TIMEOUT are NON-terminal: the network rotates the
-// leader and retries, so we keep polling through them.
+// LEADER_TIMEOUT (13) and VALIDATORS_TIMEOUT (12) are NON-terminal: the network
+// rotates the leader and retries, so we keep polling through them.
 const TERMINAL = new Set(['ACCEPTED', 'FINALIZED', 'UNDETERMINED', 'CANCELED'])
 
 export function describeGenLayerError(err: unknown): string {
@@ -78,39 +92,206 @@ export function describeGenLayerError(err: unknown): string {
   if (/insufficient funds|max fee|fee reserve/i.test(msg)) {
     return 'Your wallet is below the fee reserve for AI transactions. Top up at the testnet faucet.'
   }
-  if (/rate limit|429|timeout|network|fetch|too many|congest/i.test(msg)) {
-    return 'The network is busy. Your proposal is still being notarized.'
+  if (/contract not found|not found|no contract/i.test(msg)) {
+    return 'Contract not found at this address on Bradbury. The reader cannot reach it.'
   }
-  if (/not deployed/i.test(msg)) return 'The Lorebound contract is not deployed to this network yet.'
-  return msg || 'Something interrupted the evaluation. Please try again.'
+  if (/revert|execution reverted/i.test(msg)) {
+    return 'The contract reverted this call. The requested record may not exist on chain.'
+  }
+  if (/rate limit|429|timeout|network|fetch|too many|congest|busy/i.test(msg)) {
+    return 'Bradbury is busy. Retrying the read shortly.'
+  }
+  return msg || 'Something interrupted the request. Please try again.'
 }
 
-// ---- public surface ------------------------------------------------------
+// ---- normalizers ---------------------------------------------------------
 
-// Submit a proposal to the Continuity Trial. In mock mode this is the instant
-// local engine staged like a consensus run. In real mode it performs the
-// Bradbury flow: submit_lore_proposal (write) -> evaluate_lore_proposal (AI
-// consensus write) -> read the evaluated proposal.
+function num(v: unknown): number {
+  const n = Number(String(v ?? '0'))
+  return Number.isFinite(n) ? n : 0
+}
+
+function asArray<T>(v: unknown): T[] {
+  return Array.isArray(v) ? (v as T[]) : []
+}
+
+function parseMaybeJson<T>(v: unknown, fallback: T): T {
+  if (v == null) return fallback
+  if (typeof v === 'string') {
+    try {
+      return JSON.parse(v) as T
+    } catch {
+      return fallback
+    }
+  }
+  return v as T
+}
+
+function normalizeRules(rulesJson: unknown): CanonRule[] {
+  const arr = parseMaybeJson<unknown[]>(rulesJson, [])
+  return arr.map((text, i) => ({ id: `rule-${i + 1}`, text: String(text) }))
+}
+
+interface RawWorld {
+  world_id?: string
+  name?: string
+  rules_json?: string
+  tone?: string
+  created?: string
+}
+
+function toneTagsFromTone(tone: string): string[] {
+  return String(tone || '')
+    .split(/[,/]/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .map((t) => t.charAt(0).toUpperCase() + t.slice(1))
+}
+
+function normalizeWorld(rawWorld: RawWorld, rules?: string[], artifacts?: CanonArtifact[]): World {
+  const ruleList: CanonRule[] = rules
+    ? rules.map((text, i) => ({ id: `rule-${i + 1}`, text: String(text) }))
+    : normalizeRules(rawWorld.rules_json)
+  const tone = String(rawWorld.tone || '')
+  return {
+    worldId: String(rawWorld.world_id || ''),
+    name: String(rawWorld.name || ''),
+    rules: ruleList,
+    tone,
+    toneTags: toneTagsFromTone(tone),
+    created: String(rawWorld.created || ''),
+    artifacts: artifacts || []
+  }
+}
+
+// Deterministic constellation layout from an index, so positions are stable
+// across reads without fabricating any displayed data.
+function layoutPosition(index: number): { x: number; y: number } {
+  const angle = (index * 137.5 * Math.PI) / 180
+  const radius = 0.16 + (index % 5) * 0.06
+  return { x: 0.5 + Math.cos(angle) * radius, y: 0.5 + Math.sin(angle) * radius }
+}
+
+const ARTIFACT_IMAGES = [
+  '/assets/artifact-silentglass-guild.webp',
+  '/assets/artifact-skybridge.webp',
+  '/assets/artifact-cloudwardens.webp',
+  '/assets/artifact-lanterns.webp',
+  '/assets/artifact-map.webp',
+  '/assets/relic-crystal.webp'
+]
+
+function normalizeArtifact(raw: Record<string, unknown>, index: number): CanonArtifact {
+  const id = String(raw.artifactId || raw.artifact_id || `art-${index + 1}`)
+  const pos = layoutPosition(index)
+  return {
+    artifactId: id,
+    worldId: String(raw.worldId || raw.world_id || ''),
+    title: String(raw.title || ''),
+    type: (String(raw.type || 'Custom') as LoreType),
+    summary: String(raw.summary || ''),
+    canonFitScore: num(raw.canonFitScore),
+    proofHash: String(raw.proofHash || ''),
+    sourceProposal: String(raw.sourceProposal || ''),
+    accepted: String(raw.accepted ?? ''),
+    acceptedDate: String(raw.acceptedDate || ''),
+    x: pos.x,
+    y: pos.y,
+    connections: [],
+    image: ARTIFACT_IMAGES[index % ARTIFACT_IMAGES.length]
+  }
+}
+
+function normalizeProposal(p: Record<string, unknown>): ChainProposal {
+  return {
+    proposalId: String(p.proposalId || p.proposal_id || ''),
+    worldId: String(p.worldId || p.world_id || ''),
+    title: String(p.title || ''),
+    type: (String(p.type || 'Custom') as LoreType),
+    text: String(p.text || ''),
+    contribution: String(p.contribution || ''),
+    tone: String(p.tone || ''),
+    tags: asArray<string>(parseMaybeJson(p.tags, [])).map(String),
+    status: String(p.status || ''),
+    author: String(p.author || ''),
+    verdict: (String(p.verdict || '') as ChainProposal['verdict']),
+    canonFitScore: num(p.canonFitScore),
+    continuityRisk: num(p.continuityRisk),
+    originalityScore: num(p.originalityScore),
+    toneMatch: num(p.toneMatch),
+    evidence: asArray<EvidenceItem>(p.evidence).map((e) => ({
+      canonRule: String((e as EvidenceItem).canonRule || ''),
+      relevance: String((e as EvidenceItem).relevance || '')
+    })),
+    reason: String(p.reason || ''),
+    suggestedRevision: p.suggestedRevision == null || p.suggestedRevision === '' ? null : String(p.suggestedRevision),
+    validatorResults: asArray<ValidatorResult>(p.validatorResults).map((v) => ({
+      validator: String((v as ValidatorResult).validator || ''),
+      status: String((v as ValidatorResult).status || ''),
+      reason: String((v as ValidatorResult).reason || '')
+    })),
+    proofHash: String(p.proofHash || ''),
+    evaluatedAt: new Date().toISOString()
+  }
+}
+
+// ---- read helpers --------------------------------------------------------
+
+export async function fetchStats(): Promise<ContractStats> {
+  const raw = await readRaw('get_stats', [])
+  const stats = JSON.parse(raw)
+  return {
+    worlds: num(stats.worlds),
+    artifacts: num(stats.artifacts),
+    proposals: num(stats.proposals),
+    accepted: num(stats.accepted)
+  }
+}
+
+export async function fetchWorlds(start = 0): Promise<World[]> {
+  const raw = await readRaw('get_worlds', [start])
+  const arr = asArray<RawWorld>(JSON.parse(raw))
+  return arr.map((w) => normalizeWorld(w))
+}
+
+export async function fetchWorldState(worldId: string): Promise<World> {
+  const raw = await readRaw('get_world_state', [worldId])
+  const parsed = JSON.parse(raw) as {
+    world?: RawWorld
+    rules?: string[]
+    artifacts?: Record<string, unknown>[]
+  }
+  const artifacts = asArray<Record<string, unknown>>(parsed.artifacts).map((a, i) => normalizeArtifact(a, i))
+  return normalizeWorld(parsed.world || {}, parsed.rules, artifacts)
+}
+
+export async function fetchProposals(worldId: string, start = 0): Promise<ChainProposal[]> {
+  const raw = await readRaw('get_proposals', [worldId, start])
+  const arr = asArray<Record<string, unknown>>(JSON.parse(raw))
+  return arr.map((p) => normalizeProposal(p))
+}
+
+export async function fetchProposal(proposalId: string): Promise<ChainProposal> {
+  const raw = await readRaw('get_proposal', [proposalId])
+  return normalizeProposal(JSON.parse(raw))
+}
+
+export async function fetchArtifact(artifactId: string): Promise<CanonArtifact> {
+  const raw = await readRaw('get_canon_artifact', [artifactId])
+  return normalizeArtifact(JSON.parse(raw), 0)
+}
+
+// ---- live proposal flow (wallet signed) ----------------------------------
+
 export async function submitToTrial(
   world: World,
   proposal: Proposal,
   onStage?: StageCallback
-): Promise<EvaluationResult> {
-  if (mode === 'mock' || !IS_DEPLOYED) {
-    return mock.submitLoreProposal(world, proposal, onStage)
-  }
-  return submitToTrialReal(world, proposal, onStage)
-}
-
-async function submitToTrialReal(
-  world: World,
-  proposal: Proposal,
-  onStage?: StageCallback
-): Promise<EvaluationResult> {
+): Promise<ChainProposal> {
   const stage = onStage || (() => undefined)
   const account = getActiveAccount()
   if (!account) {
-    const message = 'Connect a wallet to evaluate on chain, or switch to mock mode in Settings.'
+    const message = 'Connect a wallet to evaluate this proposal on chain.'
     stage({ phase: 'error', message })
     throw new Error(message)
   }
@@ -151,12 +332,7 @@ async function submitToTrialReal(
     })
 
     if (decided.status === 'ACCEPTED' || decided.status === 'FINALIZED') {
-      const raw = (await readClient().readContract({
-        address: CONTRACT_ADDRESS as `0x${string}`,
-        functionName: 'get_proposal',
-        args: [proposalId]
-      })) as unknown as string
-      const result = normalizeProposal(JSON.parse(raw))
+      const result = await fetchProposal(proposalId)
       stage({ phase: 'confirmed', result, txHash: evalHash })
       return result
     }
@@ -177,8 +353,6 @@ function pick(obj: unknown, key: string): unknown {
 }
 
 function readSubmittedProposalId(tx: unknown): string {
-  // The write returns the new proposalId in the leader receipt return value.
-  // Fall back to a counter-derived id if it cannot be read.
   try {
     const ret = pick(pick(pick(tx, 'consensus_data'), 'leader_receipt'), '0')
     const val = pick(ret, 'return_value')
@@ -206,68 +380,7 @@ async function pollUntilDecided(
   return { status: 'TIMEOUT', tx: null }
 }
 
-function num(v: unknown): number {
-  const n = Number(String(v ?? '0'))
-  return Number.isFinite(n) ? n : 0
-}
-
-function normalizeProposal(p: Record<string, unknown>): EvaluationResult {
-  return {
-    proposalId: String(p.proposalId || ''),
-    title: String(p.title || ''),
-    type: (p.type as EvaluationResult['type']) || 'Custom',
-    verdict: (p.verdict as EvaluationResult['verdict']) || 'NEEDS_HUMAN_VOTE',
-    canonFitScore: num(p.canonFitScore),
-    continuityRisk: num(p.continuityRisk),
-    originalityScore: num(p.originalityScore),
-    toneMatch: num(p.toneMatch),
-    evidence: Array.isArray(p.evidence) ? (p.evidence as EvaluationResult['evidence']) : [],
-    reason: String(p.reason || ''),
-    suggestedRevision: p.suggestedRevision == null ? null : String(p.suggestedRevision),
-    validatorResults: Array.isArray(p.validatorResults)
-      ? (p.validatorResults as EvaluationResult['validatorResults'])
-      : [],
-    proofHash: String(p.proofHash || ''),
-    evaluatedAt: new Date().toISOString()
-  }
-}
-
-// ---- status --------------------------------------------------------------
-
-export async function getGenLayerStatus(world: World): Promise<GenLayerStatus> {
-  if (mode === 'mock') {
-    return mock.getMockStatus(world)
-  }
-  const base: GenLayerStatus = {
-    mode: 'real',
-    online: false,
-    contract: CONTRACT_ADDRESS,
-    deployed: IS_DEPLOYED
-  }
-  if (!IS_DEPLOYED) {
-    return { ...base, note: 'The Lorebound contract is not deployed to this network yet.' }
-  }
-  try {
-    const raw = (await readClient().readContract({
-      address: CONTRACT_ADDRESS as `0x${string}`,
-      functionName: 'get_stats',
-      args: []
-    })) as unknown as string
-    const stats = JSON.parse(raw)
-    return {
-      ...base,
-      online: true,
-      worlds: num(stats.worlds),
-      artifacts: num(stats.artifacts),
-      proposals: num(stats.proposals),
-      accepted: num(stats.accepted)
-    }
-  } catch {
-    return { ...base, note: 'Bradbury is not reachable right now. Reads will retry.' }
-  }
-}
-
-// ---- minimal wallet snapshot --------------------------------------------
+// ---- wallet --------------------------------------------------------------
 
 let activeAccount: string | null = null
 
@@ -275,13 +388,18 @@ export function getActiveAccount(): string | null {
   return activeAccount
 }
 
+export function hasInjectedWallet(): boolean {
+  return typeof window !== 'undefined' && Boolean((window as unknown as { ethereum?: unknown }).ethereum)
+}
+
 export async function connectWallet(): Promise<{ ok: boolean; address?: string; error?: string }> {
-  const eth = typeof window !== 'undefined' ? (window as unknown as { ethereum?: { request: (a: { method: string }) => Promise<string[]> } }).ethereum : undefined
+  const eth =
+    typeof window !== 'undefined'
+      ? (window as unknown as { ethereum?: { request: (a: { method: string }) => Promise<string[]> } }).ethereum
+      : undefined
   if (!eth) {
-    // Mock wallet: synthesize a deterministic demo address so the chrome can
-    // show a connected identity even without a provider.
-    activeAccount = '0xA57e1004C0117Be0bD0F00C0117Be0bD0f00C011'
-    return { ok: true, address: activeAccount }
+    // No synthetic fallback: without an injected provider there is no wallet.
+    return { ok: false, error: 'No wallet detected' }
   }
   try {
     const accounts = await eth.request({ method: 'eth_requestAccounts' })

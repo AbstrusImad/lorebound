@@ -5,6 +5,7 @@ import { ArtifactHallRelic } from '../components/artifacts/ArtifactHallRelic'
 import { AssetImage } from '../components/shared/AssetImage'
 import { ProofHashBadge } from '../components/shared/ProofHashBadge'
 import { EmptyState } from '../components/shared/EmptyState'
+import { LoadingCard, ErrorCard } from '../components/shared/ChainState'
 import { useStore } from '../state/store'
 import { useToast } from '../components/shared/Toast'
 import type { CanonArtifact, LoreType } from '../types'
@@ -13,15 +14,18 @@ import { formatDate } from '../utils/formatters'
 const FILTERS: (LoreType | 'All')[] = ['All', 'Faction', 'Location', 'Relic', 'Event', 'Character', 'Creature']
 
 export function ArtifactHall() {
-  const { world } = useStore()
+  const { world, loading, error, refresh } = useStore()
   const toast = useToast()
   const [filter, setFilter] = useState<LoreType | 'All'>('All')
   const [open, setOpen] = useState<CanonArtifact | null>(null)
 
   const shown = useMemo(
-    () => (filter === 'All' ? world.artifacts : world.artifacts.filter((a) => a.type === filter)),
-    [filter, world.artifacts]
+    () => (!world ? [] : filter === 'All' ? world.artifacts : world.artifacts.filter((a) => a.type === filter)),
+    [filter, world]
   )
+
+  if (loading && !world) return <LoadingCard label="Unsealing the Artifact Hall" />
+  if (!world) return <ErrorCard message={error || 'No world is published on chain yet.'} onRetry={refresh} />
 
   const exportArtifact = (a: CanonArtifact) => {
     const blob = new Blob([JSON.stringify(a, null, 2)], { type: 'application/json' })
