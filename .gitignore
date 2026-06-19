@@ -1,0 +1,31 @@
+# dependencies
+node_modules/
+frontend/node_modules/
+scripts/node_modules/
+
+# build output
+dist/
+frontend/dist/
+frontend/.vite/
+
+# env / secrets
+.env
+.env.local
+*.key
+
+# python / tooling
+__pycache__/
+.pytest_cache/
+.gltest_cache/
+*.log
+
+# temp helper scripts
+_*.mjs
+_*.out
+_*.ps1
+scripts/_install.log
+scripts/_assets.log
+
+# os
+.DS_Store
+Thumbs.db
